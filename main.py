@@ -26,6 +26,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # --- DATABASE HELPER ---
 def get_db_connection():
+    # This automatically uses the cloud database URL from your Render environment variables
     return psycopg2.connect(DATABASE_URL)
 
 # --- ROOT ROUTE ---
