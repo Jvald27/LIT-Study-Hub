@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import psycopg2
 import zipfile
@@ -19,11 +20,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_HOST = "localhost"
-DB_NAME = "lock_in_twin_db"
-DB_USER = "postgres"
-DB_PASS = "bingbong27"  # <-- Put your password here!
+# --- CLOUD CONFIGURATION ---
+# This looks for the environment variable we set in Render
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# --- DATABASE HELPER ---
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+# --- ROOT ROUTE ---
+@app.get("/")
+async def read_index():
+    return FileResponse('index.html')
 
 class ConnectionManager:
     def __init__(self):
@@ -45,15 +53,12 @@ class ConnectionManager:
             for connection in self.active_connections[room_id]:
                 await connection.send_text(message)
 
-
 manager = ConnectionManager()
-
 
 class NewUser(BaseModel):
     email: str
     password: str
     display_name: str
-
 
 class NewRoom(BaseModel):
     host_id: int
@@ -61,11 +66,10 @@ class NewRoom(BaseModel):
     max_capacity: int
     is_private: bool
 
-
 @app.post("/register")
 def register_user(user: NewUser):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO Users (Email, PasswordHash, DisplayName) VALUES (%s, %s, %s) RETURNING UserID",
@@ -79,11 +83,10 @@ def register_user(user: NewUser):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 @app.post("/rooms")
 def create_room(room: NewRoom):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO Rooms (HostID, Subject, MaxCapacity, IsPrivate) VALUES (%s, %s, %s, %s) RETURNING RoomID",
@@ -97,15 +100,11 @@ def create_room(room: NewRoom):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
-# --- UPGRADED: Allows host to see their own locked rooms ---
 @app.get("/rooms")
 def get_rooms(user_id: int = None):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
-
-        # If the browser sends the User ID, we fetch public rooms PLUS any private rooms this user owns
         if user_id is not None:
             cur.execute(
                 "SELECT RoomID, Subject, MaxCapacity, HostID, IsPrivate FROM Rooms WHERE IsPrivate = FALSE OR HostID = %s",
@@ -116,19 +115,15 @@ def get_rooms(user_id: int = None):
         rooms = cur.fetchall()
         cur.close()
         conn.close()
-
-        # We now send 'is_private' back to the browser so the HTML knows to put a 🔒 icon on it
-        room_list = [{"room_id": r[0], "subject": r[1], "max_capacity": r[2], "host_id": r[3], "is_private": r[4]} for r
-                     in rooms]
+        room_list = [{"room_id": r[0], "subject": r[1], "max_capacity": r[2], "host_id": r[3], "is_private": r[4]} for r in rooms]
         return {"status": "success", "rooms": room_list}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 @app.put("/rooms/{room_id}/lock")
 def lock_room(room_id: int):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("UPDATE Rooms SET IsPrivate = TRUE WHERE RoomID = %s", (room_id,))
         conn.commit()
@@ -138,12 +133,10 @@ def lock_room(room_id: int):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
-# --- NEW: Unlock Route ---
 @app.put("/rooms/{room_id}/unlock")
 def unlock_room(room_id: int):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("UPDATE Rooms SET IsPrivate = FALSE WHERE RoomID = %s", (room_id,))
         conn.commit()
@@ -153,11 +146,10 @@ def unlock_room(room_id: int):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 @app.get("/rooms/{room_id}/messages")
 def get_room_messages(room_id: int):
     try:
-        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT u.DisplayName, m.MessageText, TO_CHAR(m.SentAt, 'HH12:MI AM')
@@ -174,34 +166,27 @@ def get_room_messages(room_id: int):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 @app.post("/upload-anki")
 async def upload_anki(file: UploadFile = File(...)):
     if not file.filename.endswith('.apkg'):
         return {"status": "error", "message": "Please upload a valid .apkg file!"}
-
     temp_zip = f"temp_{file.filename}"
     cards = []
-
     try:
         with open(temp_zip, "wb") as f:
             f.write(await file.read())
-
         with zipfile.ZipFile(temp_zip, 'r') as z:
             files_in_zip = z.namelist()
             db_name = "collection.anki21" if "collection.anki21" in files_in_zip else "collection.anki2"
             z.extract(db_name, "temp_anki_dir")
-
         conn = sqlite3.connect(f"temp_anki_dir/{db_name}")
         cur = conn.cursor()
         cur.execute("SELECT flds FROM notes")
         rows = cur.fetchall()
-
         for row in rows:
             fields = row[0].split('\x1f')
             if len(fields) >= 2:
                 cards.append({"front": fields[0], "back": fields[1]})
-
         conn.close()
     except Exception as e:
         return {"status": "error", "message": f"Parsing Error: {str(e)}"}
@@ -210,17 +195,13 @@ async def upload_anki(file: UploadFile = File(...)):
         if os.path.exists("temp_anki_dir/collection.anki21"): os.remove("temp_anki_dir/collection.anki21")
         if os.path.exists("temp_anki_dir/collection.anki2"): os.remove("temp_anki_dir/collection.anki2")
         if os.path.exists("temp_anki_dir"): os.rmdir("temp_anki_dir")
-
     return {"status": "success", "message": f"Successfully loaded {len(cards)} cards!", "cards": cards}
-
 
 @app.websocket("/ws/{room_id}/{user_id}/{user_name}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: int, user_name: str):
     await manager.connect(websocket, room_id)
-
     now = datetime.now().strftime("%I:%M %p")
     await manager.broadcast(json.dumps({"type": "chat", "text": f"({now}) 🟢 {user_name} joined the room!"}), room_id)
-
     try:
         while True:
             data = await websocket.receive_text()
@@ -229,7 +210,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: int, u
                 await manager.broadcast(data, room_id)
             except json.JSONDecodeError:
                 try:
-                    conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
+                    conn = get_db_connection()
                     cur = conn.cursor()
                     cur.execute("INSERT INTO Messages (RoomID, UserID, MessageText) VALUES (%s, %s, %s)",
                                 (int(room_id), user_id, data))
@@ -238,11 +219,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: int, u
                     conn.close()
                 except Exception as db_error:
                     print("Error saving message:", db_error)
-
                 now = datetime.now().strftime("%I:%M %p")
                 chat_msg = json.dumps({"type": "chat", "text": f"({now}) {user_name}: {data}"})
                 await manager.broadcast(chat_msg, room_id)
-
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
         now = datetime.now().strftime("%I:%M %p")
