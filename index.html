@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Lock In Twin</title>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; text-align: center; margin: 0; padding-top: 40px; }
+        .box { background-color: #1e1e1e; padding: 30px; margin: auto; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        h1, h2, h3 { margin-top: 0; }
+
+        input, select { width: 90%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #333; background-color: #2d2d2d; color: white; outline: none; transition: 0.2s;}
+        input:focus { border-color: #2196F3; }
+        button { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: transform 0.1s, filter 0.2s; color: white; width: 100%;}
+        button:active { transform: scale(0.97); }
+        button:hover { filter: brightness(1.1); }
+
+        .btn-blue { background-color: #2196F3; }
+        .btn-green { background-color: #4CAF50; }
+        .btn-red { background-color: #f44336; }
+        .btn-purple { background-color: #9C27B0; width: 48%; }
+        .btn-orange { background-color: #ff9800; width: auto; margin-top: 10px;}
+
+        .hidden { display: none !important; }
+
+        .room-card { background-color: #2d2d2d; padding: 20px; margin: 15px 0; border-radius: 10px; text-align: left; border-left: 5px solid #2196F3; display: flex; justify-content: space-between; align-items: center;}
+
+        #chatMessages { height: 350px; background: #0a0a0a; overflow-y: auto; padding: 15px; text-align: left; margin-bottom: 15px; border-radius: 10px; border: 1px solid #333; display: flex; flex-direction: column;}
+        .chat-bubble { padding: 10px 15px; border-radius: 18px; margin-bottom: 8px; max-width: 75%; word-wrap: break-word; font-size: 14px; line-height: 1.4;}
+        .chat-bubble.user { background-color: #2d2d2d; color: white; align-self: flex-start; border-bottom-left-radius: 4px;}
+        .chat-bubble.system { background-color: transparent; color: #888; font-size: 12px; font-style: italic; text-align: center; align-self: center; margin: 10px 0;}
+        .chat-timestamp { font-size: 10px; color: #aaa; margin-bottom: 4px; display: block;}
+
+        .flashcard-scene { perspective: 1000px; width: 100%; height: 250px; margin-bottom: 25px; }
+        .flashcard-inner { width: 100%; height: 100%; transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1); transform-style: preserve-3d; position: relative; }
+        .flashcard-scene.is-flipped .flashcard-inner { transform: rotateY(180deg); }
+        .flashcard-face { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 16px; padding: 20px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+        .flashcard-front { background: #ffffff; color: #121212; }
+        .flashcard-back { background: #e3f2fd; color: #0d47a1; transform: rotateY(180deg); border: 2px solid #2196F3;}
+        .flashcard-header { font-size: 13px; color: #888; position: absolute; top: 15px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;}
+        .flashcard-content { font-size: 22px; font-weight: bold; text-align: center; word-wrap: break-word; max-width: 100%; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <div id="loginScreen" class="box" style="width: 350px;">
+        <h2>Lock In Twin</h2>
+        <p style="color: #aaa; font-size: 14px; margin-top: -10px;">Study together, anywhere.</p>
+        <input type="email" id="email" placeholder="Email Address">
+        <input type="text" id="displayName" placeholder="Display Name">
+        <input type="password" id="password" placeholder="Password">
+        <button class="btn-green" onclick="register()" style="margin-top: 15px;">Enter App</button>
+        <p id="statusMessage" style="font-size: 13px; margin-top: 15px;"></p>
+    </div>
+
+    <div id="dashboardScreen" class="hidden" style="width: 600px; margin: auto;">
+        <h2 style="text-align: left; margin-bottom: 20px;">Lobby</h2>
+
+        <button onclick="toggleCreateForm()" class="btn-blue" style="font-size: 16px; margin-bottom: 20px;">+ Create Study Room</button>
+
+        <div id="createRoomForm" class="box hidden" style="margin-bottom: 20px;">
+            <h3>Configure Room</h3>
+            <input type="text" id="roomSubject" placeholder="Room Topic (e.g. AP Bio)">
+            <input type="number" id="roomCapacity" placeholder="Max Students" value="5">
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <button class="btn-green" onclick="createRoom()">Launch Room</button>
+                <button class="btn-red" onclick="toggleCreateForm()">Cancel</button>
+            </div>
+        </div>
+
+        <div class="box">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3 style="margin: 0;">Active Public Rooms</h3>
+                <button onclick="fetchRooms()" class="btn-blue" style="width: auto; padding: 8px 15px; font-size: 12px;">Refresh</button>
+            </div>
+            <div id="roomList"></div>
+        </div>
+    </div>
+
+    <div id="activeRoomScreen" class="hidden" style="width: 1100px; margin: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 id="activeRoomTitle" style="margin: 0;">Room Title</h1>
+            <button onclick="leaveRoom()" class="btn-red" style="width: auto;">Exit Room</button>
+        </div>
+
+        <div style="display: flex; gap: 25px;">
+
+            <div class="box" style="flex: 1.5; display: flex; flex-direction: column;">
+
+                <div id="youtubeArea" class="hidden" style="margin-bottom: 20px;">
+                    <div id="ytPlayerDiv"></div>
+                </div>
+
+                <div id="flashcardArea" class="hidden" style="flex-grow: 1;">
+                    <div class="flashcard-scene" id="flashcardScene">
+                        <div class="flashcard-inner" id="flashcardInner">
+                            <div class="flashcard-face flashcard-front">
+                                <div id="fcHeaderFront" class="flashcard-header">Flashcard #1</div>
+                                <div id="fcTextFront" class="flashcard-content">Front text</div>
+                            </div>
+                            <div class="flashcard-face flashcard-back">
+                                <div class="flashcard-header">Answer</div>
+                                <div id="fcTextBack" class="flashcard-content">Back text</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+                        <button onclick="flipCard()" class="btn-purple">Flip Card ↺</button>
+                        <button onclick="nextCard()" class="btn-blue" style="width: 48%;">Next Card →</button>
+                    </div>
+                </div>
+
+                <div id="uploadArea" style="margin-top: auto; padding-top: 25px; border-top: 1px solid #333;">
+                    <h4 style="margin: 0 0 10px 0; color: #aaa;">Room Tools</h4>
+
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+                        <input type="text" id="ytLinkInput" placeholder="Paste YouTube Link to watch together..." style="margin: 0; flex: 1;">
+                        <button onclick="shareYouTubeVideo()" class="btn-red" style="margin: 0; width: auto; background-color: #ff0000;">Sync Video</button>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="file" id="ankiFile" accept=".apkg" style="background: white; color: black; margin: 0; flex: 1;">
+                        <button onclick="uploadAnki()" class="btn-orange" style="margin: 0;">Load Deck</button>
+                    </div>
+                    <p id="uploadStatus" style="font-size: 12px; color: #aaa; text-align: left; margin-top: 5px;"></p>
+
+                    <div id="hostControlsDiv" class="hidden" style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #555;">
+                        <h4 style="margin: 0 0 10px 0; color: #f44336; text-align: left;">👑 Host Powers</h4>
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                            <button onclick="lockRoom()" class="btn-red" style="margin: 0;">Lock Room</button>
+                            <button onclick="unlockRoom()" class="btn-green" style="margin: 0;">Unlock Room</button>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="text" id="kickInput" placeholder="Type a username to kick..." style="margin: 0; flex: 1;">
+                            <button onclick="kickUser()" class="btn-red" style="margin: 0; width: auto;">Kick User</button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="box" style="flex: 1; display: flex; flex-direction: column;">
+                <h3 style="margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px;">Room Chat</h3>
+                <div id="chatMessages"></div>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="chatInput" placeholder="Message room..." onkeypress="handleEnter(event)" style="margin: 0;">
+                    <button onclick="sendMessage()" class="btn-blue" style="width: auto;">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUserId = null;
+        let currentUserName = "";
+        let ws = null;
+        let activeRoomId = null;
+
+        let activeDeck = [];
+        let currentCardIndex = 0;
+        let showingBack = false;
+
+        let ytPlayer = null;
+        let isReceivingSyncCommand = false;
+
+        async function register() {
+            const email = document.getElementById("email").value;
+            const displayName = document.getElementById("displayName").value;
+            const password = document.getElementById("password").value;
+
+            try {
+                const response = await fetch("http://127.0.0.1:8000/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: email, display_name: displayName, password: password })
+                });
+
+                const data = await response.json();
+                if(data.status === "success") {
+                    currentUserId = data.user_id;
+                    currentUserName = data.display_name;
+                    document.getElementById("loginScreen").classList.add("hidden");
+                    document.getElementById("dashboardScreen").classList.remove("hidden");
+                    fetchRooms();
+                } else {
+                    document.getElementById("statusMessage").innerText = data.message;
+                    document.getElementById("statusMessage").style.color = "#ff5555";
+                }
+            } catch (error) {
+                document.getElementById("statusMessage").innerText = "Cannot connect to server.";
+            }
+        }
+
+        function toggleCreateForm() {
+            document.getElementById("createRoomForm").classList.toggle("hidden");
+        }
+
+        async function createRoom() {
+            const subject = document.getElementById("roomSubject").value;
+            const capacity = parseInt(document.getElementById("roomCapacity").value);
+
+            const response = await fetch("http://127.0.0.1:8000/rooms", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ host_id: currentUserId, subject: subject, max_capacity: capacity, is_private: false })
+            });
+
+            const data = await response.json();
+            if(data.status === "success") joinRoom(data.room_id, data.subject, currentUserId);
+        }
+
+        async function fetchRooms() {
+            // UPGRADED: We now pass the user ID so the backend knows to send us our locked rooms!
+            const url = currentUserId ? `http://127.0.0.1:8000/rooms?user_id=${currentUserId}` : "http://127.0.0.1:8000/rooms";
+            const response = await fetch(url);
+            const data = await response.json();
+
+            const roomListDiv = document.getElementById("roomList");
+            roomListDiv.innerHTML = "";
+
+            if(data.rooms.length === 0) {
+                roomListDiv.innerHTML = "<p style='color: #888; text-align: center;'>No rooms active. Create one!</p>";
+                return;
+            }
+
+            data.rooms.forEach(room => {
+                // If it's private, we add a padlock icon so the host knows it's locked
+                const lockStatus = room.is_private ? " <span style='color:#f44336; font-size: 14px;'>(Locked 🔒)</span>" : "";
+
+                roomListDiv.innerHTML += `
+                    <div class="room-card">
+                        <div>
+                            <h4 style="margin: 0 0 5px 0; font-size: 18px;">${room.subject}${lockStatus}</h4>
+                            <p style="margin: 0; color: #aaa; font-size: 13px;">Slots: ${room.max_capacity}</p>
+                        </div>
+                        <button onclick="joinRoom(${room.room_id}, '${room.subject}', ${room.host_id})" class="btn-green" style="width: auto;">Join</button>
+                    </div>
+                `;
+            });
+        }
+
+        function joinRoom(roomId, subject, hostId) {
+            document.getElementById("dashboardScreen").classList.add("hidden");
+            document.getElementById("activeRoomScreen").classList.remove("hidden");
+            document.getElementById("activeRoomTitle").innerText = subject;
+            document.getElementById("chatMessages").innerHTML = "";
+
+            activeRoomId = roomId;
+            fetchChatHistory(roomId);
+
+            if (currentUserId === hostId) {
+                document.getElementById("hostControlsDiv").classList.remove("hidden");
+            } else {
+                document.getElementById("hostControlsDiv").classList.add("hidden");
+            }
+
+            document.getElementById("flashcardArea").classList.add("hidden");
+            document.getElementById("flashcardScene").classList.remove("is-flipped");
+            document.getElementById("youtubeArea").classList.add("hidden");
+            activeDeck = [];
+            if (ytPlayer) ytPlayer.stopVideo();
+
+            ws = new WebSocket(`ws://127.0.0.1:8000/ws/${roomId}/${currentUserId}/${encodeURIComponent(currentUserName)}`);
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === "chat") {
+                    const messagesDiv = document.getElementById("chatMessages");
+                    if (data.text.includes("🟢") || data.text.includes("🔴") || data.text.includes("🔒") || data.text.includes("🔓") || data.text.includes("👢")) {
+                        messagesDiv.innerHTML += `<div class="chat-bubble system">${data.text}</div>`;
+                    } else {
+                        const parts = data.text.split(")");
+                        const time = parts[0].replace("(", "").trim();
+                        const msgContent = parts[1].trim();
+                        messagesDiv.innerHTML += `<div class="chat-bubble user"><span class="chat-timestamp">${time}</span>${msgContent}</div>`;
+                    }
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                }
+                else if (data.type === "flashcard") {
+                    document.getElementById("flashcardArea").classList.remove("hidden");
+                    document.getElementById("fcHeaderFront").innerText = `Flashcard #${data.index + 1}`;
+                    document.getElementById("fcTextFront").innerHTML = data.front;
+                    document.getElementById("fcTextBack").innerHTML = data.back;
+
+                    const scene = document.getElementById("flashcardScene");
+                    if (data.showBack) scene.classList.add("is-flipped");
+                    else scene.classList.remove("is-flipped");
+
+                    showingBack = data.showBack;
+                    currentCardIndex = data.index;
+                }
+                else if (data.type === "yt_sync") {
+                    isReceivingSyncCommand = true;
+                    if (data.action === "load") {
+                        initYouTubePlayer(data.videoId);
+                    } else if (data.action === "play" && ytPlayer) {
+                        if (Math.abs(ytPlayer.getCurrentTime() - data.time) > 1.5) {
+                            ytPlayer.seekTo(data.time, true);
+                        }
+                        ytPlayer.playVideo();
+                    } else if (data.action === "pause" && ytPlayer) {
+                        ytPlayer.seekTo(data.time, true);
+                        ytPlayer.pauseVideo();
+                    }
+                    setTimeout(() => { isReceivingSyncCommand = false; }, 500);
+                }
+                else if (data.type === "kick") {
+                    if (data.target === currentUserName) {
+                        leaveRoom();
+                        alert("You were kicked from the room by the Host.");
+                    } else {
+                        const messagesDiv = document.getElementById("chatMessages");
+                        messagesDiv.innerHTML += `<div class="chat-bubble system">👢 ${data.target} was removed from the room.</div>`;
+                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
+                }
+            };
+        }
+
+        async function fetchChatHistory(roomId) {
+            const response = await fetch(`http://127.0.0.1:8000/rooms/${roomId}/messages`);
+            const data = await response.json();
+
+            if (data.status === "success" && data.messages.length > 0) {
+                const messagesDiv = document.getElementById("chatMessages");
+                messagesDiv.innerHTML += `<div class="chat-bubble system">--- Chat History ---</div>`;
+                data.messages.forEach(msg => {
+                    messagesDiv.innerHTML += `
+                        <div class="chat-bubble user" style="background-color: #2a2a2a;">
+                            <span class="chat-timestamp">${msg.time} - ${msg.user}</span>
+                            ${msg.text}
+                        </div>
+                    `;
+                });
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+
+        function leaveRoom() {
+            if (ws) ws.close();
+            if (ytPlayer) ytPlayer.stopVideo();
+            document.getElementById("activeRoomScreen").classList.add("hidden");
+            document.getElementById("dashboardScreen").classList.remove("hidden");
+            fetchRooms();
+        }
+
+        function sendMessage() {
+            const input = document.getElementById("chatInput");
+            if (input.value && ws) {
+                ws.send(input.value);
+                input.value = "";
+            }
+        }
+
+        function handleEnter(event) {
+            if (event.key === "Enter") sendMessage();
+        }
+
+        async function lockRoom() {
+            const response = await fetch(`http://127.0.0.1:8000/rooms/${activeRoomId}/lock`, { method: "PUT" });
+            const data = await response.json();
+            if (data.status === "success" && ws) {
+                ws.send(JSON.stringify({ type: "chat", text: "🔒 The Host locked the room. No new players can join." }));
+                alert("Room is now locked and hidden from the public lobby.");
+            }
+        }
+
+        // --- NEW: Unlock Function ---
+        async function unlockRoom() {
+            const response = await fetch(`http://127.0.0.1:8000/rooms/${activeRoomId}/unlock`, { method: "PUT" });
+            const data = await response.json();
+            if (data.status === "success" && ws) {
+                ws.send(JSON.stringify({ type: "chat", text: "🔓 The Host unlocked the room. It is now public again." }));
+                alert("Room is now unlocked and visible in the public lobby.");
+            }
+        }
+
+        function kickUser() {
+            const target = document.getElementById("kickInput").value.trim();
+            if (target && ws) {
+                ws.send(JSON.stringify({ type: "kick", target: target }));
+                document.getElementById("kickInput").value = "";
+            }
+        }
+
+        async function uploadAnki() {
+            const fileInput = document.getElementById('ankiFile');
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            document.getElementById("uploadStatus").innerText = "Extracting Database...";
+
+            const response = await fetch("http://127.0.0.1:8000/upload-anki", { method: "POST", body: formData });
+            const data = await response.json();
+
+            if (data.status === "success") {
+                document.getElementById("uploadStatus").innerText = data.message;
+                activeDeck = data.cards;
+                currentCardIndex = 0;
+                showingBack = false;
+                broadcastCurrentCard();
+            } else {
+                document.getElementById("uploadStatus").innerText = data.message;
+            }
+        }
+
+        function flipCard() {
+            if (activeDeck.length === 0) return;
+            showingBack = !showingBack;
+            broadcastCurrentCard();
+        }
+
+        function nextCard() {
+            if (activeDeck.length === 0) return;
+            currentCardIndex = (currentCardIndex + 1) % activeDeck.length;
+            showingBack = false;
+            broadcastCurrentCard();
+        }
+
+        function broadcastCurrentCard() {
+            if (ws && activeDeck.length > 0) {
+                ws.send(JSON.stringify({
+                    type: "flashcard",
+                    index: currentCardIndex,
+                    front: activeDeck[currentCardIndex].front,
+                    back: activeDeck[currentCardIndex].back,
+                    showBack: showingBack
+                }));
+            }
+        }
+
+        function extractVideoID(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+        function shareYouTubeVideo() {
+            const url = document.getElementById("ytLinkInput").value;
+            const videoId = extractVideoID(url);
+
+            if (videoId) {
+                initYouTubePlayer(videoId);
+                ws.send(JSON.stringify({ type: "yt_sync", action: "load", videoId: videoId }));
+                document.getElementById("ytLinkInput").value = "";
+            } else {
+                alert("Please enter a valid YouTube URL.");
+            }
+        }
+
+        function initYouTubePlayer(videoId) {
+            document.getElementById("youtubeArea").classList.remove("hidden");
+
+            if (ytPlayer) {
+                ytPlayer.loadVideoById(videoId);
+            } else {
+                ytPlayer = new YT.Player('ytPlayerDiv', {
+                    height: '315',
+                    width: '100%',
+                    videoId: videoId,
+                    playerVars: { 'autoplay': 1, 'controls': 1 },
+                    events: {
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            if (isReceivingSyncCommand || !ws) return;
+
+            if (event.data == YT.PlayerState.PLAYING) {
+                ws.send(JSON.stringify({ type: "yt_sync", action: "play", time: ytPlayer.getCurrentTime() }));
+            } else if (event.data == YT.PlayerState.PAUSED) {
+                ws.send(JSON.stringify({ type: "yt_sync", action: "pause", time: ytPlayer.getCurrentTime() }));
+            }
+        }
+    </script>
+</body>
+</html>
