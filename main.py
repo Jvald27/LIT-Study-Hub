@@ -21,12 +21,12 @@ app.add_middleware(
 )
 
 # --- CLOUD CONFIGURATION ---
-# This looks for the environment variable we set in Render
+# This is the only place your database URL will live now
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # --- DATABASE HELPER ---
+# This function connects to the cloud, not your laptop
 def get_db_connection():
-    # This automatically uses the cloud database URL from your Render environment variables
     return psycopg2.connect(DATABASE_URL)
 
 # --- ROOT ROUTE ---
@@ -37,18 +37,13 @@ async def read_index():
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
-
     async def connect(self, websocket: WebSocket, room_id: str):
         await websocket.accept()
-        if room_id not in self.active_connections:
-            self.active_connections[room_id] = []
+        if room_id not in self.active_connections: self.active_connections[room_id] = []
         self.active_connections[room_id].append(websocket)
-
     def disconnect(self, websocket: WebSocket, room_id: str):
-        if room_id in self.active_connections:
-            if websocket in self.active_connections[room_id]:
-                self.active_connections[room_id].remove(websocket)
-
+        if room_id in self.active_connections and websocket in self.active_connections[room_id]:
+            self.active_connections[room_id].remove(websocket)
     async def broadcast(self, message: str, room_id: str):
         if room_id in self.active_connections:
             for connection in self.active_connections[room_id]:
@@ -107,12 +102,9 @@ def get_rooms(user_id: int = None):
         conn = get_db_connection()
         cur = conn.cursor()
         if user_id is not None:
-            cur.execute(
-                "SELECT RoomID, Subject, MaxCapacity, HostID, IsPrivate FROM Rooms WHERE IsPrivate = FALSE OR HostID = %s",
-                (user_id,))
+            cur.execute("SELECT RoomID, Subject, MaxCapacity, HostID, IsPrivate FROM Rooms WHERE IsPrivate = FALSE OR HostID = %s", (user_id,))
         else:
             cur.execute("SELECT RoomID, Subject, MaxCapacity, HostID, IsPrivate FROM Rooms WHERE IsPrivate = FALSE")
-
         rooms = cur.fetchall()
         cur.close()
         conn.close()
@@ -169,16 +161,13 @@ def get_room_messages(room_id: int):
 
 @app.post("/upload-anki")
 async def upload_anki(file: UploadFile = File(...)):
-    if not file.filename.endswith('.apkg'):
-        return {"status": "error", "message": "Please upload a valid .apkg file!"}
+    if not file.filename.endswith('.apkg'): return {"status": "error", "message": "Invalid file"}
     temp_zip = f"temp_{file.filename}"
     cards = []
     try:
-        with open(temp_zip, "wb") as f:
-            f.write(await file.read())
+        with open(temp_zip, "wb") as f: f.write(await file.read())
         with zipfile.ZipFile(temp_zip, 'r') as z:
-            files_in_zip = z.namelist()
-            db_name = "collection.anki21" if "collection.anki21" in files_in_zip else "collection.anki2"
+            db_name = "collection.anki21" if "collection.anki21" in z.namelist() else "collection.anki2"
             z.extract(db_name, "temp_anki_dir")
         conn = sqlite3.connect(f"temp_anki_dir/{db_name}")
         cur = conn.cursor()
@@ -186,44 +175,27 @@ async def upload_anki(file: UploadFile = File(...)):
         rows = cur.fetchall()
         for row in rows:
             fields = row[0].split('\x1f')
-            if len(fields) >= 2:
-                cards.append({"front": fields[0], "back": fields[1]})
+            if len(fields) >= 2: cards.append({"front": fields[0], "back": fields[1]})
         conn.close()
-    except Exception as e:
-        return {"status": "error", "message": f"Parsing Error: {str(e)}"}
+    except Exception as e: return {"status": "error", "message": str(e)}
     finally:
         if os.path.exists(temp_zip): os.remove(temp_zip)
-        if os.path.exists("temp_anki_dir/collection.anki21"): os.remove("temp_anki_dir/collection.anki21")
-        if os.path.exists("temp_anki_dir/collection.anki2"): os.remove("temp_anki_dir/collection.anki2")
-        if os.path.exists("temp_anki_dir"): os.rmdir("temp_anki_dir")
-    return {"status": "success", "message": f"Successfully loaded {len(cards)} cards!", "cards": cards}
+    return {"status": "success", "cards": cards}
 
 @app.websocket("/ws/{room_id}/{user_id}/{user_name}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: int, user_name: str):
     await manager.connect(websocket, room_id)
-    now = datetime.now().strftime("%I:%M %p")
-    await manager.broadcast(json.dumps({"type": "chat", "text": f"({now}) 🟢 {user_name} joined the room!"}), room_id)
     try:
         while True:
             data = await websocket.receive_text()
             try:
-                parsed = json.loads(data)
-                await manager.broadcast(data, room_id)
-            except json.JSONDecodeError:
-                try:
-                    conn = get_db_connection()
-                    cur = conn.cursor()
-                    cur.execute("INSERT INTO Messages (RoomID, UserID, MessageText) VALUES (%s, %s, %s)",
-                                (int(room_id), user_id, data))
-                    conn.commit()
-                    cur.close()
-                    conn.close()
-                except Exception as db_error:
-                    print("Error saving message:", db_error)
-                now = datetime.now().strftime("%I:%M %p")
-                chat_msg = json.dumps({"type": "chat", "text": f"({now}) {user_name}: {data}"})
-                await manager.broadcast(chat_msg, room_id)
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("INSERT INTO Messages (RoomID, UserID, MessageText) VALUES (%s, %s, %s)", (int(room_id), user_id, data))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e: print(e)
+            await manager.broadcast(data, room_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
-        now = datetime.now().strftime("%I:%M %p")
-        await manager.broadcast(json.dumps({"type": "chat", "text": f"({now}) 🔴 {user_name} left the room."}), room_id)
